@@ -61,6 +61,7 @@ const (
 	configDevice                = "device"
 	configMountpoint            = "mountpoint"
 	charset                     = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	configVersion               = 1
 )
 
 var (
@@ -83,11 +84,27 @@ func init() {
 		NewFs:       NewFs,
 		Config: func(name string, m configmap.Mapper) {
 			ctx := context.TODO()
-			tokenString, ok := m.Get("token")
-			if ok && tokenString != "" {
-				fmt.Printf("Already have a token - refresh?\n")
-				if !config.Confirm(false) {
-					return
+
+			refresh := false
+			if version, ok := m.Get("configVersion"); ok {
+				ver, err := strconv.Atoi(version)
+				if err != nil {
+					log.Fatalf("Failed to parse config version - corrupted config")
+				}
+				refresh = ver != configVersion
+			} else {
+				refresh = true
+			}
+
+			if refresh {
+				fmt.Printf("Config outdated - refreshing\n")
+			} else {
+				tokenString, ok := m.Get("token")
+				if ok && tokenString != "" {
+					fmt.Printf("Already have a token - refresh?\n")
+					if !config.Confirm(false) {
+						return
+					}
 				}
 			}
 
@@ -147,6 +164,8 @@ func init() {
 				m.Set(configDevice, device)
 				m.Set(configMountpoint, mountpoint)
 			}
+
+			m.Set("configVersion", strconv.Itoa(configVersion))
 		},
 		Options: []fs.Option{{
 			Name:     "md5_memory_limit",
@@ -495,6 +514,19 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 	err := configstruct.Set(m, opt)
 	if err != nil {
 		return nil, err
+	}
+
+	var ok bool = true
+	var version string
+	if version, ok = m.Get("configVersion"); ok {
+		ver, err := strconv.Atoi(version)
+		if err != nil {
+			return nil, errors.New("Failed to parse config version")
+		}
+		ok = ver == configVersion
+	}
+	if !ok {
+		return nil, errors.New("Outdated config - please reconfigure this backend")
 	}
 
 	rootIsDir := strings.HasSuffix(root, "/")
